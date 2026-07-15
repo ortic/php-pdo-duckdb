@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DUCKDB_VERSION: v1.5.4
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.3', '8.4']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP ${{ matrix.php }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+
+      - name: Cache DuckDB C library
+        id: cache-duckdb
+        uses: actions/cache@v4
+        with:
+          path: third_party/duckdb
+          key: duckdb-${{ env.DUCKDB_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Fetch DuckDB C library
+        if: steps.cache-duckdb.outputs.cache-hit != 'true'
+        run: ./scripts/fetch-duckdb.sh "$DUCKDB_VERSION"
+
+      - name: Build extension
+        run: |
+          phpize
+          ./configure --with-pdo-duckdb
+          make -j"$(nproc)"
+
+      - name: Verify the module loads
+        run: |
+          export LD_LIBRARY_PATH="$PWD/third_party/duckdb"
+          php -d extension="$PWD/modules/pdo_duckdb.so" --ri pdo_duckdb
+
+      - name: Run the test suite
+        env:
+          NO_INTERACTION: '1'
+          REPORT_EXIT_STATUS: '1'
+        run: |
+          export LD_LIBRARY_PATH="$PWD/third_party/duckdb"
+          php run-tests.php -q --show-diff -d extension="$PWD/modules/pdo_duckdb.so" tests
+
+      - name: Dump failing test diffs
+        if: failure()
+        run: |
+          shopt -s nullglob
+          for f in tests/*.diff tests/*.out tests/*.log; do
+            echo "::group::$f"
+            cat "$f"
+            echo "::endgroup::"
+          done
