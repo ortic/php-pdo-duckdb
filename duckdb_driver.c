@@ -101,20 +101,54 @@ static bool pdo_duckdb_handle_preparer(pdo_dbh_t *dbh, zend_string *sql,
 {
 	pdo_duckdb_db_handle *H = (pdo_duckdb_db_handle *)dbh->driver_data;
 	pdo_duckdb_stmt *S = ecalloc(1, sizeof(pdo_duckdb_stmt));
+	zend_string *nsql = NULL;
+	duckdb_state rc;
 
 	S->H = H;
+	stmt->driver_data = S;
+	stmt->methods = &duckdb_stmt_methods;
 
-	if (duckdb_prepare(H->conn, ZSTR_VAL(sql), &S->prepared) == DuckDBError) {
+	/* Emulated prepares: let PDO substitute quoted values into the SQL and
+	 * re-prepare per execute (see the executer). This enables things native
+	 * prepares can't do, such as reusing a named parameter. */
+	if (driver_options
+			? pdo_attr_lval(driver_options, PDO_ATTR_EMULATE_PREPARES, H->emulate_prepares)
+			: H->emulate_prepares) {
+		S->emulated = 1;
+		stmt->supports_placeholders = PDO_PLACEHOLDER_NONE;
+		return true;
+	}
+
+	/* DuckDB understands positional "?" placeholders natively; have PDO rewrite
+	 * named ":name" placeholders into "?" and track the ordinal mapping. */
+	stmt->supports_placeholders = PDO_PLACEHOLDER_POSITIONAL;
+
+	switch (pdo_parse_params(stmt, sql, &nsql)) {
+		case 1:
+			/* query was rewritten; nsql is owned by us */
+			break;
+		case 0:
+			/* nothing to rewrite; keep the original */
+			nsql = zend_string_copy(sql);
+			break;
+		default:
+			/* pdo_parse_params recorded the reason in stmt->error_code */
+			strncpy(dbh->error_code, stmt->error_code, sizeof(dbh->error_code));
+			efree(S);
+			stmt->driver_data = NULL;
+			return false;
+	}
+
+	rc = duckdb_prepare(H->conn, ZSTR_VAL(nsql), &S->prepared);
+	zend_string_release(nsql);
+
+	if (rc == DuckDBError) {
 		pdo_duckdb_error(dbh, "HY000", duckdb_prepare_error(S->prepared));
 		duckdb_destroy_prepare(&S->prepared);
 		efree(S);
+		stmt->driver_data = NULL;
 		return false;
 	}
-
-	stmt->driver_data = S;
-	stmt->methods = &duckdb_stmt_methods;
-	/* DuckDB understands positional "?" placeholders natively. */
-	stmt->supports_placeholders = PDO_PLACEHOLDER_POSITIONAL;
 
 	return true;
 }
@@ -192,7 +226,13 @@ static bool pdo_duckdb_handle_rollback(pdo_dbh_t *dbh)
 /* {{{ set_attribute — no driver-specific attributes are writable yet */
 static bool pdo_duckdb_set_attribute(pdo_dbh_t *dbh, zend_long attr, zval *val)
 {
+	pdo_duckdb_db_handle *H = (pdo_duckdb_db_handle *)dbh->driver_data;
+
 	switch (attr) {
+		case PDO_ATTR_EMULATE_PREPARES:
+			H->emulate_prepares = zend_is_true(val);
+			return true;
+
 		case PDO_ATTR_TIMEOUT:
 			/* Accepted and ignored for now; DuckDB has no per-connection
 			 * busy timeout equivalent. */
@@ -206,10 +246,16 @@ static bool pdo_duckdb_set_attribute(pdo_dbh_t *dbh, zend_long attr, zval *val)
 /* {{{ get_attribute */
 static int pdo_duckdb_get_attribute(pdo_dbh_t *dbh, zend_long attr, zval *return_value)
 {
+	pdo_duckdb_db_handle *H = (pdo_duckdb_db_handle *)dbh->driver_data;
+
 	switch (attr) {
 		case PDO_ATTR_CLIENT_VERSION:
 		case PDO_ATTR_SERVER_VERSION:
 			ZVAL_STRING(return_value, (char *)duckdb_library_version());
+			return 1;
+
+		case PDO_ATTR_EMULATE_PREPARES:
+			ZVAL_BOOL(return_value, H->emulate_prepares);
 			return 1;
 
 		default:

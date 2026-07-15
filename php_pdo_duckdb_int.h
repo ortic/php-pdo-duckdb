@@ -26,6 +26,7 @@ typedef struct {
 	duckdb_database       db;
 	duckdb_connection     conn;
 	pdo_duckdb_error_info einfo;
+	zend_bool             emulate_prepares;
 } pdo_duckdb_db_handle;
 
 /* Per-statement (pdo_stmt) driver data. */
@@ -34,6 +35,7 @@ typedef struct {
 	duckdb_prepared_statement prepared;
 	duckdb_result             result;
 	zend_bool                 has_result;
+	zend_bool                 emulated;   /* prepared per-execute from substituted SQL */
 
 	/* Column schema, cached once per execution. */
 	idx_t                     column_count;

@@ -8,15 +8,15 @@ API and any PDO-based framework — most notably Laravel's `Illuminate\Database`
 which makes an in-memory DuckDB attractive for fast, isolated tests.
 
 > **Status: early development.** See [`PLAN.md`](PLAN.md) for the full roadmap.
-> **Phase 1 (current):** in addition to connecting, the driver now executes
-> statements — `PDO::exec()` (affected-row count), `PDO::query()`, and
-> `PDO::prepare()` + `execute()` (re-executable) — and fetches result rows by
-> adapting DuckDB's columnar data chunks to PDO's row-at-a-time model.
+> **Phase 2 (current):** connect, execute (`exec`/`query`/`prepare`+`execute`),
+> fetch, and **parameter binding** — positional `?` and named `:name`
+> placeholders, typed binds (INT/BOOL/STR/LOB/NULL), and optional
+> `ATTR_EMULATE_PREPARES`.
 >
-> **Type coverage:** BOOLEAN, all integer widths (HUGEINT / UHUGEINT / large
-> UBIGINT as exact strings), FLOAT, DOUBLE, DECIMAL (exact string), VARCHAR,
-> BLOB, and SQL NULL. **Not yet:** parameter binding (phase 2) and temporal /
-> UUID / nested types, which currently fetch as `NULL` (phase 4).
+> **Result type coverage:** BOOLEAN, all integer widths (HUGEINT / UHUGEINT /
+> large UBIGINT as exact strings), FLOAT, DOUBLE, DECIMAL (exact string),
+> VARCHAR, BLOB, and SQL NULL. **Not yet:** temporal / UUID / nested types,
+> which currently fetch as `NULL` (phase 4).
 
 ## Requirements
 
@@ -106,6 +106,26 @@ duckdb:dbname=<path>;access_mode=READ_ONLY;read_only=1;threads=<n>;max_memory=<s
 - `access_mode` — `READ_ONLY` or `READ_WRITE` (DuckDB config option).
 - `read_only=1` — convenience alias for `access_mode=READ_ONLY`.
 - `threads`, `max_memory` — passed straight to DuckDB configuration.
+
+### Parameter binding
+
+Both positional `?` and named `:name` placeholders work. Native prepared
+statements are used by default; set `PDO::ATTR_EMULATE_PREPARES => true` to
+substitute values client-side instead (which also lets you reuse the same
+named parameter more than once).
+
+Two things to know, because DuckDB is stricter about types than most engines
+and PDO stringifies untyped values:
+
+- **Booleans:** binding a raw PHP `bool` through an untyped `execute([$flag])`
+  array sends an empty string for `false` (a PDO quirk), which DuckDB will not
+  cast to `BOOLEAN`. Bind booleans with `PDO::PARAM_BOOL`, or as integers
+  `0`/`1`. (Laravel does this conversion for you.)
+- **Arithmetic on bare parameters** such as `SELECT ? + ?` fails unless the
+  parameters are typed (`PDO::PARAM_INT`) or cast in SQL (`?::INT + ?::INT`),
+  because DuckDB cannot infer a type with no column context. Parameters used
+  against columns (`WHERE id = ?`, `INSERT ... VALUES (?)`, `LIMIT ?`) infer
+  their type and need no help.
 
 ## Running the tests
 

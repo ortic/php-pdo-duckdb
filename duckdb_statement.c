@@ -21,6 +21,7 @@
 #include <inttypes.h>
 
 #include "php.h"
+#include "php_streams.h"
 #include "pdo/php_pdo.h"
 #include "pdo/php_pdo_driver.h"
 #include "php_pdo_duckdb_int.h"
@@ -185,6 +186,23 @@ static int duckdb_stmt_executer(pdo_stmt_t *stmt)
 
 	/* A statement can be executed more than once; start from a clean slate. */
 	pdo_duckdb_stmt_reset_result(S);
+
+	/* Emulated prepares: PDO has substituted the bound values into the query,
+	 * so (re-)prepare it fresh for this execution. */
+	if (S->emulated) {
+		zend_string *q = stmt->active_query_string
+			? stmt->active_query_string : stmt->query_string;
+		if (S->prepared) {
+			duckdb_destroy_prepare(&S->prepared);
+			S->prepared = NULL;
+		}
+		if (duckdb_prepare(S->H->conn, ZSTR_VAL(q), &S->prepared) == DuckDBError) {
+			pdo_duckdb_error_stmt(stmt, "HY000", duckdb_prepare_error(S->prepared));
+			duckdb_destroy_prepare(&S->prepared);
+			S->prepared = NULL;
+			return 0;
+		}
+	}
 
 	if (duckdb_execute_prepared(S->prepared, &S->result) == DuckDBError) {
 		pdo_duckdb_error_stmt(stmt, "HY000", duckdb_result_error(&S->result));
@@ -420,10 +438,89 @@ static int duckdb_stmt_get_col(pdo_stmt_t *stmt, int colno, zval *result,
 }
 /* }}} */
 
-/* {{{ param_hook — parameter binding lands in phase 2 */
+/* {{{ param_hook — bind parameters just before execution */
 static int duckdb_stmt_param_hook(pdo_stmt_t *stmt,
 		struct pdo_bound_param_data *param, enum pdo_param_event event_type)
 {
+	pdo_duckdb_stmt *S = (pdo_duckdb_stmt *)stmt->driver_data;
+	zval *parameter;
+	idx_t idx;
+	duckdb_state rc;
+
+	/* We only care about bound parameters, and only at the point just before
+	 * execution (see skip_param_evt in the handle factory). */
+	if (!param->is_param || event_type != PDO_PARAM_EVT_EXEC_PRE) {
+		return 1;
+	}
+
+	if (param->paramno < 0) {
+		pdo_duckdb_error_stmt(stmt, "HY093", "unresolved bound parameter");
+		return 0;
+	}
+	idx = (idx_t)(param->paramno + 1); /* DuckDB parameters are 1-based */
+
+	parameter = &param->parameter;
+	if (Z_ISREF_P(parameter)) {
+		parameter = Z_REFVAL_P(parameter);
+	}
+
+	if (Z_TYPE_P(parameter) == IS_NULL) {
+		rc = duckdb_bind_null(S->prepared, idx);
+	} else {
+		switch (PDO_PARAM_TYPE(param->param_type)) {
+			case PDO_PARAM_NULL:
+				rc = duckdb_bind_null(S->prepared, idx);
+				break;
+
+			case PDO_PARAM_BOOL:
+				rc = duckdb_bind_boolean(S->prepared, idx, zend_is_true(parameter));
+				break;
+
+			case PDO_PARAM_INT:
+				rc = duckdb_bind_int64(S->prepared, idx, zval_get_long(parameter));
+				break;
+
+			case PDO_PARAM_LOB:
+				if (Z_TYPE_P(parameter) == IS_RESOURCE) {
+					php_stream *stm = NULL;
+					php_stream_from_zval_no_verify(stm, parameter);
+					if (!stm) {
+						pdo_duckdb_error_stmt(stmt, "HY105",
+							"expected a stream resource for a LOB parameter");
+						return 0;
+					}
+					zend_string *mem = php_stream_copy_to_mem(stm, PHP_STREAM_COPY_ALL, 0);
+					if (mem) {
+						rc = duckdb_bind_blob(S->prepared, idx, ZSTR_VAL(mem), ZSTR_LEN(mem));
+						zend_string_release(mem);
+					} else {
+						rc = duckdb_bind_blob(S->prepared, idx, "", 0);
+					}
+				} else {
+					zend_string *zs = zval_get_string(parameter);
+					rc = duckdb_bind_blob(S->prepared, idx, ZSTR_VAL(zs), ZSTR_LEN(zs));
+					zend_string_release(zs);
+				}
+				break;
+
+			case PDO_PARAM_STR:
+			default: {
+				/* PDO has already coerced PDO_PARAM_STR values to strings by the
+				 * time we get here (see really_register_bound_param), so bind the
+				 * value as VARCHAR and let DuckDB auto-cast to the column type. */
+				zend_string *zs = zval_get_string(parameter);
+				rc = duckdb_bind_varchar_length(S->prepared, idx,
+					ZSTR_VAL(zs), ZSTR_LEN(zs));
+				zend_string_release(zs);
+				break;
+			}
+		}
+	}
+
+	if (rc == DuckDBError) {
+		pdo_duckdb_error_stmt(stmt, "HY000", "failed to bind parameter");
+		return 0;
+	}
 	return 1;
 }
 /* }}} */
