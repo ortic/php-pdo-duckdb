@@ -158,13 +158,15 @@ Binding covers the common inbound cases; nested-type *binding* is a later phase.
   (`getColumnMeta`), `ATTR_STRINGIFY_FETCHES`, BLOB streams.
 - Milestone: type-coverage `.phpt` matrix passes.
 
-**Phase 5 — Laravel integration package** *(separate Composer package)*
-- DuckDB SQL is largely Postgres-compatible → provide a
-  `Connection` + `Grammar` (extend the Postgres grammar), `Connector`, and
-  schema builder, registered via a service provider. Ship as
-  `ortic/laravel-duckdb` (or similar), depending on the `pdo_duckdb` extension.
-- Milestone: `DB::connection('duckdb')` runs migrations + Eloquent queries;
-  usable as a test database.
+**Phase 5 — Laravel integration package** *(separate Composer package)* — **done**
+- DuckDB SQL is largely Postgres-compatible → provides a `Connection` +
+  `Grammar` (extending the Postgres grammars), `Connector`, and schema builder,
+  registered via a service provider. Lives in its own repo:
+  **[ortic/laravel-duckdb](https://github.com/ortic/laravel-duckdb)**.
+- Auto-increment is emulated with DuckDB sequences; unique/index become
+  `CREATE [UNIQUE] INDEX`; introspection uses `information_schema`.
+- Milestone met: migrations, query builder, transactions and Eloquent all run
+  against an in-memory DuckDB (verified via Capsule).
 
 **Phase 6 — Distribution & CI**
 - CI matrix (PHP 8.1–8.4 × Linux/macOS/Windows), prebuilt artifacts, docs,

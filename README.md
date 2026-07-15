@@ -127,6 +127,15 @@ and PDO stringifies untyped values:
   against columns (`WHERE id = ?`, `INSERT ... VALUES (?)`, `LIMIT ?`) infer
   their type and need no help.
 
+## Using with Laravel
+
+A companion package wires this extension into Laravel's database layer
+(connection, query/schema grammars, Eloquent):
+
+- **[ortic/laravel-duckdb](https://github.com/ortic/laravel-duckdb)** — register
+  a `duckdb` connection and use migrations, the query builder, transactions, and
+  Eloquent as usual. In-memory DuckDB makes a fast, isolated test database.
+
 ## Running the tests
 
 ```bash
