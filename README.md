@@ -132,7 +132,7 @@ and PDO stringifies untyped values:
 A companion package wires this extension into Laravel's database layer
 (connection, query/schema grammars, Eloquent):
 
-- **[ortic/laravel-duckdb](https://github.com/ortic/laravel-duckdb)** — register
+- **[ortic/laravel-duckdb-pdo](https://github.com/ortic/laravel-duckdb-pdo)** — register
   a `duckdb` connection and use migrations, the query builder, transactions, and
   Eloquent as usual. In-memory DuckDB makes a fast, isolated test database.
 

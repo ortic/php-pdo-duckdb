@@ -162,7 +162,7 @@ Binding covers the common inbound cases; nested-type *binding* is a later phase.
 - DuckDB SQL is largely Postgres-compatible → provides a `Connection` +
   `Grammar` (extending the Postgres grammars), `Connector`, and schema builder,
   registered via a service provider. Lives in its own repo:
-  **[ortic/laravel-duckdb](https://github.com/ortic/laravel-duckdb)**.
+  **[ortic/laravel-duckdb-pdo](https://github.com/ortic/laravel-duckdb-pdo)**.
 - Auto-increment is emulated with DuckDB sequences; unique/index become
   `CREATE [UNIQUE] INDEX`; introspection uses `information_schema`.
 - Milestone met: migrations, query builder, transactions and Eloquent all run
