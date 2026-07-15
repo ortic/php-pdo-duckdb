@@ -1,0 +1,16 @@
+// config.w32 for extension pdo_duckdb (Windows build — untested placeholder)
+// vim:ft=javascript
+
+ARG_WITH("pdo-duckdb", "DuckDB support for PDO", "no");
+
+if (PHP_PDO_DUCKDB != "no") {
+	if (CHECK_HEADER_ADD_INCLUDE("duckdb.h", "CFLAGS_PDO_DUCKDB",
+			PHP_PDO_DUCKDB + ";" + PHP_PHP_BUILD + "\\include\\duckdb") &&
+		CHECK_LIB("duckdb.lib", "pdo_duckdb",
+			PHP_PDO_DUCKDB + ";" + PHP_PHP_BUILD + "\\lib")) {
+		EXTENSION("pdo_duckdb", "pdo_duckdb.c duckdb_driver.c duckdb_statement.c");
+		ADD_EXTENSION_DEP("pdo_duckdb", "pdo");
+	} else {
+		WARNING("pdo_duckdb not enabled; libduckdb or duckdb.h not found");
+	}
+}

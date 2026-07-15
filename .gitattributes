@@ -1,0 +1,2 @@
+# Normalize all text files to LF; this project builds and runs on Linux.
+* text=auto eol=lf

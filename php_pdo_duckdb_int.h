@@ -1,0 +1,51 @@
+/*
+  +----------------------------------------------------------------------+
+  | pdo_duckdb — native PHP PDO driver for DuckDB                         |
+  +----------------------------------------------------------------------+
+  | Internal shared declarations.                                        |
+  +----------------------------------------------------------------------+
+*/
+
+#ifndef PHP_PDO_DUCKDB_INT_H
+#define PHP_PDO_DUCKDB_INT_H
+
+#include "duckdb.h"
+
+/* DuckDB has no global "last error" — every failing call surfaces its own
+ * message. We stash the most recent one here so PDO's error reporting
+ * (errorInfo(), exceptions) can retrieve it. */
+typedef struct {
+	const char *file;
+	int         line;
+	int         errcode;   /* 0 = no error, non-zero = error */
+	char       *errmsg;    /* owned; allocated with pestrdup, may be NULL */
+} pdo_duckdb_error_info;
+
+/* Per-connection (pdo_dbh) driver data. */
+typedef struct {
+	duckdb_database       db;
+	duckdb_connection     conn;
+	pdo_duckdb_error_info einfo;
+} pdo_duckdb_db_handle;
+
+/* Per-statement (pdo_stmt) driver data.
+ * Phase 1 will add data-chunk cursor state here. */
+typedef struct {
+	pdo_duckdb_db_handle     *H;
+	duckdb_prepared_statement prepared;
+	duckdb_result             result;
+	zend_bool                 has_result;
+} pdo_duckdb_stmt;
+
+extern const pdo_driver_t pdo_duckdb_driver;
+extern const struct pdo_stmt_methods duckdb_stmt_methods;
+
+void _pdo_duckdb_error(pdo_dbh_t *dbh, pdo_stmt_t *stmt, const char *sqlstate,
+		const char *msg, const char *file, int line);
+
+#define pdo_duckdb_error(dbh, sqlstate, msg) \
+	_pdo_duckdb_error(dbh, NULL, sqlstate, msg, __FILE__, __LINE__)
+#define pdo_duckdb_error_stmt(stmt, sqlstate, msg) \
+	_pdo_duckdb_error((stmt)->dbh, stmt, sqlstate, msg, __FILE__, __LINE__)
+
+#endif /* PHP_PDO_DUCKDB_INT_H */
