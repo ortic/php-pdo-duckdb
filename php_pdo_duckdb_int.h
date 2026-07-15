@@ -40,6 +40,7 @@ typedef struct {
 	/* Column schema, cached once per execution. */
 	idx_t                     column_count;
 	duckdb_type              *coltypes;      /* [column_count]: logical type id per column */
+	duckdb_logical_type      *collogical;    /* [column_count]: full logical type per column */
 	uint8_t                  *decimal_scale; /* [column_count]: scale, for DECIMAL columns */
 	duckdb_type              *decimal_itype; /* [column_count]: DECIMAL storage type id */
 
