@@ -59,6 +59,23 @@ extension dir; add `extension=pdo_duckdb` to your `php.ini`). Ensure
 `libduckdb.so` is on the loader path (e.g. copy it into `/usr/local/lib` and run
 `sudo ldconfig`, or set `LD_LIBRARY_PATH`).
 
+## Installing into Docker / DDEV
+
+A Composer package can't ship a compiled PHP extension, so `pdo_duckdb` has to
+be built into your runtime image. `scripts/install.sh` does the whole job
+(fetch `libduckdb`, build, `make install`, enable the ini) and is meant to run
+as root in an image build:
+
+```dockerfile
+RUN apt-get update && apt-get install -y $PHPIZE_DEPS unzip curl \
+ && curl -fsSL https://github.com/ortic/php-pdo-duckdb/archive/refs/heads/main.tar.gz | tar xz -C /tmp \
+ && /tmp/php-pdo-duckdb-main/scripts/install.sh
+```
+
+It honours `DUCKDB_VERSION`, and `PHPIZE` / `PHP_CONFIG` overrides so you can
+build for several PHP versions in one image. A ready-to-use **DDEV** setup is in
+[`examples/ddev/`](examples/ddev/).
+
 ## Usage
 
 ```php
