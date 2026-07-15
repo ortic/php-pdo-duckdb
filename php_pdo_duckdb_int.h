@@ -60,4 +60,17 @@ void _pdo_duckdb_error(pdo_dbh_t *dbh, pdo_stmt_t *stmt, const char *sqlstate,
 #define pdo_duckdb_error_stmt(stmt, sqlstate, msg) \
 	_pdo_duckdb_error((stmt)->dbh, stmt, sqlstate, msg, __FILE__, __LINE__)
 
+/* Report the error carried by a failed duckdb_result, mapping DuckDB's
+ * structured error type to an appropriate SQLSTATE. */
+void _pdo_duckdb_result_error(pdo_dbh_t *dbh, pdo_stmt_t *stmt,
+		duckdb_result *result, const char *file, int line);
+
+#define pdo_duckdb_result_error(dbh, result) \
+	_pdo_duckdb_result_error(dbh, NULL, result, __FILE__, __LINE__)
+#define pdo_duckdb_result_error_stmt(stmt, result) \
+	_pdo_duckdb_result_error((stmt)->dbh, stmt, result, __FILE__, __LINE__)
+
+/* Best-effort SQLSTATE for a DuckDB prepare-error message (string only). */
+const char *pdo_duckdb_sqlstate_for_message(const char *msg);
+
 #endif /* PHP_PDO_DUCKDB_INT_H */

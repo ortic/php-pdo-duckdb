@@ -1,5 +1,5 @@
 --TEST--
-pdo_duckdb: invalid SQL raises a PDOException with SQLSTATE HY000
+pdo_duckdb: invalid SQL raises a PDOException with a syntax SQLSTATE
 --SKIPIF--
 <?php if (!extension_loaded('pdo_duckdb')) die('skip pdo_duckdb not loaded'); ?>
 --FILE--
@@ -21,5 +21,5 @@ try {
 }
 ?>
 --EXPECT--
-query: caught HY000
-exec: caught HY000
+query: caught 42601
+exec: caught 42601

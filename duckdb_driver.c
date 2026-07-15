@@ -16,6 +16,7 @@
 
 #include <string.h>
 #include <strings.h>
+#include <inttypes.h>
 
 #include "php.h"
 #include "pdo/php_pdo.h"
@@ -23,6 +24,61 @@
 #include "php_pdo_duckdb.h"
 #include "php_pdo_duckdb_int.h"
 #include "zend_exceptions.h"
+
+/* {{{ Map DuckDB's structured error type to a SQLSTATE. */
+static const char *pdo_duckdb_sqlstate_for_type(duckdb_error_type type)
+{
+	switch (type) {
+		case DUCKDB_ERROR_CONSTRAINT:            return "23000"; /* integrity constraint */
+		case DUCKDB_ERROR_CONVERSION:
+		case DUCKDB_ERROR_MISMATCH_TYPE:
+		case DUCKDB_ERROR_INVALID_TYPE:
+		case DUCKDB_ERROR_DECIMAL:               return "22000"; /* data exception */
+		case DUCKDB_ERROR_OUT_OF_RANGE:          return "22003"; /* numeric out of range */
+		case DUCKDB_ERROR_DIVIDE_BY_ZERO:        return "22012"; /* division by zero */
+		case DUCKDB_ERROR_SYNTAX:
+		case DUCKDB_ERROR_PARSER:                return "42601"; /* syntax error */
+		case DUCKDB_ERROR_CATALOG:
+		case DUCKDB_ERROR_BINDER:
+		case DUCKDB_ERROR_PERMISSION:            return "42000"; /* syntax/access rule */
+		case DUCKDB_ERROR_TRANSACTION:           return "25000"; /* invalid txn state */
+		case DUCKDB_ERROR_NOT_IMPLEMENTED:       return "0A000"; /* not supported */
+		case DUCKDB_ERROR_OUT_OF_MEMORY:         return "53200"; /* out of memory */
+		case DUCKDB_ERROR_CONNECTION:            return "08000"; /* connection exception */
+		case DUCKDB_ERROR_IO:
+		case DUCKDB_ERROR_NETWORK:
+		case DUCKDB_ERROR_HTTP:                  return "58030"; /* I/O error */
+		case DUCKDB_ERROR_PARAMETER_NOT_RESOLVED:
+		case DUCKDB_ERROR_PARAMETER_NOT_ALLOWED: return "HY093"; /* invalid use of param */
+		default:                                 return "HY000";
+	}
+}
+/* }}} */
+
+/* {{{ Best-effort SQLSTATE from a prepare-error message (no structured type). */
+const char *pdo_duckdb_sqlstate_for_message(const char *msg)
+{
+	if (!msg) {
+		return "HY000";
+	}
+	if (strstr(msg, "Parser Error") || strstr(msg, "Syntax Error")) {
+		return "42601";
+	}
+	if (strstr(msg, "Catalog Error") || strstr(msg, "Binder Error")) {
+		return "42000";
+	}
+	if (strstr(msg, "Constraint Error")) {
+		return "23000";
+	}
+	if (strstr(msg, "Conversion Error")) {
+		return "22000";
+	}
+	if (strstr(msg, "Not implemented Error")) {
+		return "0A000";
+	}
+	return "HY000";
+}
+/* }}} */
 
 /* {{{ Record an error and, at construct time, raise it as an exception.
  * DuckDB reports errors per-call, so callers pass the message explicitly. */
@@ -55,6 +111,15 @@ void _pdo_duckdb_error(pdo_dbh_t *dbh, pdo_stmt_t *stmt, const char *sqlstate,
 }
 /* }}} */
 
+/* {{{ Report a failed duckdb_result with a type-derived SQLSTATE. */
+void _pdo_duckdb_result_error(pdo_dbh_t *dbh, pdo_stmt_t *stmt,
+		duckdb_result *result, const char *file, int line)
+{
+	const char *sqlstate = pdo_duckdb_sqlstate_for_type(duckdb_result_error_type(result));
+	_pdo_duckdb_error(dbh, stmt, sqlstate, duckdb_result_error(result), file, line);
+}
+/* }}} */
+
 /* {{{ Run a resultless statement (used for transaction control). */
 static bool pdo_duckdb_simple_exec(pdo_dbh_t *dbh, const char *sql)
 {
@@ -62,7 +127,7 @@ static bool pdo_duckdb_simple_exec(pdo_dbh_t *dbh, const char *sql)
 	duckdb_result result;
 
 	if (duckdb_query(H->conn, sql, &result) == DuckDBError) {
-		pdo_duckdb_error(dbh, "HY000", duckdb_result_error(&result));
+		pdo_duckdb_result_error(dbh, &result);
 		duckdb_destroy_result(&result);
 		return false;
 	}
@@ -143,7 +208,8 @@ static bool pdo_duckdb_handle_preparer(pdo_dbh_t *dbh, zend_string *sql,
 	zend_string_release(nsql);
 
 	if (rc == DuckDBError) {
-		pdo_duckdb_error(dbh, "HY000", duckdb_prepare_error(S->prepared));
+		const char *msg = duckdb_prepare_error(S->prepared);
+		pdo_duckdb_error(dbh, pdo_duckdb_sqlstate_for_message(msg), msg);
 		duckdb_destroy_prepare(&S->prepared);
 		efree(S);
 		stmt->driver_data = NULL;
@@ -162,7 +228,7 @@ static zend_long pdo_duckdb_handle_doer(pdo_dbh_t *dbh, const zend_string *sql)
 	zend_long changed;
 
 	if (duckdb_query(H->conn, ZSTR_VAL(sql), &result) == DuckDBError) {
-		pdo_duckdb_error(dbh, "HY000", duckdb_result_error(&result));
+		pdo_duckdb_result_error(dbh, &result);
 		duckdb_destroy_result(&result);
 		return -1;
 	}
@@ -279,6 +345,71 @@ static void pdo_duckdb_fetch_error_func(pdo_dbh_t *dbh, pdo_stmt_t *stmt, zval *
 }
 /* }}} */
 
+/* {{{ last_insert_id — DuckDB has no implicit row id, so this maps to
+ * currval() of a named sequence: lastInsertId('my_seq'). */
+static zend_string *pdo_duckdb_last_insert_id(pdo_dbh_t *dbh, const zend_string *name)
+{
+	pdo_duckdb_db_handle *H = (pdo_duckdb_db_handle *)dbh->driver_data;
+	zend_string *qname, *id = NULL;
+	duckdb_result result;
+	duckdb_data_chunk chunk;
+	char *sql;
+
+	if (name == NULL) {
+		pdo_duckdb_error(dbh, "IM001",
+			"PDO::lastInsertId() requires a sequence name with DuckDB, e.g. "
+			"lastInsertId('my_seq'); DuckDB has no implicit auto-increment id");
+		return NULL;
+	}
+
+	qname = pdo_duckdb_handle_quoter(dbh, name, PDO_PARAM_STR);
+	spprintf(&sql, 0, "SELECT currval(%s)", ZSTR_VAL(qname));
+	zend_string_release(qname);
+
+	if (duckdb_query(H->conn, sql, &result) == DuckDBError) {
+		pdo_duckdb_result_error(dbh, &result);
+		duckdb_destroy_result(&result);
+		efree(sql);
+		return NULL;
+	}
+	efree(sql);
+
+	chunk = duckdb_fetch_chunk(result);
+	if (chunk != NULL) {
+		if (duckdb_data_chunk_get_size(chunk) > 0) {
+			duckdb_vector vec = duckdb_data_chunk_get_vector(chunk, 0);
+			uint64_t *validity = duckdb_vector_get_validity(vec);
+			if (validity == NULL || duckdb_validity_row_is_valid(validity, 0)) {
+				int64_t *data = (int64_t *) duckdb_vector_get_data(vec);
+				char buf[24];
+				int l = snprintf(buf, sizeof(buf), "%" PRId64, data[0]);
+				id = zend_string_init(buf, l, 0);
+			}
+		}
+		duckdb_destroy_data_chunk(&chunk);
+	}
+
+	duckdb_destroy_result(&result);
+	return id;
+}
+/* }}} */
+
+/* {{{ check_liveness — used for persistent connections */
+static zend_result pdo_duckdb_check_liveness(pdo_dbh_t *dbh)
+{
+	pdo_duckdb_db_handle *H = (pdo_duckdb_db_handle *)dbh->driver_data;
+	duckdb_result result;
+	duckdb_state rc;
+
+	if (H == NULL || H->conn == NULL) {
+		return FAILURE;
+	}
+	rc = duckdb_query(H->conn, "SELECT 1", &result);
+	duckdb_destroy_result(&result);
+	return rc == DuckDBError ? FAILURE : SUCCESS;
+}
+/* }}} */
+
 /* {{{ pdo_duckdb_methods */
 static const struct pdo_dbh_methods pdo_duckdb_methods = {
 	pdo_duckdb_handle_closer,
@@ -289,10 +420,10 @@ static const struct pdo_dbh_methods pdo_duckdb_methods = {
 	pdo_duckdb_handle_commit,
 	pdo_duckdb_handle_rollback,
 	pdo_duckdb_set_attribute,
-	NULL,   /* last_insert_id  — phase 3 */
+	pdo_duckdb_last_insert_id,
 	pdo_duckdb_fetch_error_func,
 	pdo_duckdb_get_attribute,
-	NULL,   /* check_liveness */
+	pdo_duckdb_check_liveness,
 	NULL,   /* get_driver_methods */
 	NULL,   /* persistent_shutdown */
 	NULL,   /* in_transaction — use PDO's internal tracking */

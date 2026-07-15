@@ -205,7 +205,7 @@ static int duckdb_stmt_executer(pdo_stmt_t *stmt)
 	}
 
 	if (duckdb_execute_prepared(S->prepared, &S->result) == DuckDBError) {
-		pdo_duckdb_error_stmt(stmt, "HY000", duckdb_result_error(&S->result));
+		pdo_duckdb_result_error_stmt(stmt, &S->result);
 		duckdb_destroy_result(&S->result);
 		return 0;
 	}

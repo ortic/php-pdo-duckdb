@@ -8,10 +8,10 @@ API and any PDO-based framework — most notably Laravel's `Illuminate\Database`
 which makes an in-memory DuckDB attractive for fast, isolated tests.
 
 > **Status: early development.** See [`PLAN.md`](PLAN.md) for the full roadmap.
-> **Phase 2 (current):** connect, execute (`exec`/`query`/`prepare`+`execute`),
-> fetch, and **parameter binding** — positional `?` and named `:name`
-> placeholders, typed binds (INT/BOOL/STR/LOB/NULL), and optional
-> `ATTR_EMULATE_PREPARES`.
+> **Phase 3 (current):** connect, execute, fetch, parameter binding, plus
+> transactions, **SQLSTATE-mapped errors** (e.g. constraint violations →
+> `23000`, syntax → `42601`), sequence-based `lastInsertId('seq')`, and a
+> liveness check for persistent connections.
 >
 > **Result type coverage:** BOOLEAN, all integer widths (HUGEINT / UHUGEINT /
 > large UBIGINT as exact strings), FLOAT, DOUBLE, DECIMAL (exact string),
