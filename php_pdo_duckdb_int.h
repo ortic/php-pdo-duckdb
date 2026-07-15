@@ -28,13 +28,23 @@ typedef struct {
 	pdo_duckdb_error_info einfo;
 } pdo_duckdb_db_handle;
 
-/* Per-statement (pdo_stmt) driver data.
- * Phase 1 will add data-chunk cursor state here. */
+/* Per-statement (pdo_stmt) driver data. */
 typedef struct {
 	pdo_duckdb_db_handle     *H;
 	duckdb_prepared_statement prepared;
 	duckdb_result             result;
 	zend_bool                 has_result;
+
+	/* Column schema, cached once per execution. */
+	idx_t                     column_count;
+	duckdb_type              *coltypes;      /* [column_count]: logical type id per column */
+	uint8_t                  *decimal_scale; /* [column_count]: scale, for DECIMAL columns */
+	duckdb_type              *decimal_itype; /* [column_count]: DECIMAL storage type id */
+
+	/* Columnar -> row cursor over the result's data chunks. */
+	duckdb_data_chunk         current_chunk;
+	idx_t                     chunk_size;    /* rows in current_chunk */
+	idx_t                     chunk_row;     /* row currently exposed to get_col */
 } pdo_duckdb_stmt;
 
 extern const pdo_driver_t pdo_duckdb_driver;

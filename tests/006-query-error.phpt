@@ -1,5 +1,5 @@
 --TEST--
-pdo_duckdb: prepare()/exec() report "not implemented" in phase 0
+pdo_duckdb: invalid SQL raises a PDOException with SQLSTATE HY000
 --SKIPIF--
 <?php if (!extension_loaded('pdo_duckdb')) die('skip pdo_duckdb not loaded'); ?>
 --FILE--
@@ -7,19 +7,19 @@ pdo_duckdb: prepare()/exec() report "not implemented" in phase 0
 $db = new PDO('duckdb::memory:', null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
 
 try {
-    $db->prepare('SELECT 1');
-    echo "prepare: no exception\n";
+    $db->query('SELECT FROM nope bad syntax');
+    echo "query: no exception\n";
 } catch (PDOException $e) {
-    echo "prepare: caught\n";
+    echo "query: caught " . $e->getCode() . "\n";
 }
 
 try {
-    $db->exec('SELECT 1');
+    $db->exec('THIS IS NOT SQL');
     echo "exec: no exception\n";
 } catch (PDOException $e) {
-    echo "exec: caught\n";
+    echo "exec: caught " . $e->getCode() . "\n";
 }
 ?>
 --EXPECT--
-prepare: caught
-exec: caught
+query: caught HY000
+exec: caught HY000

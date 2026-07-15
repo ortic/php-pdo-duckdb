@@ -8,10 +8,15 @@ API and any PDO-based framework — most notably Laravel's `Illuminate\Database`
 which makes an in-memory DuckDB attractive for fast, isolated tests.
 
 > **Status: early development.** See [`PLAN.md`](PLAN.md) for the full roadmap.
-> **Phase 0 (this milestone):** the extension builds, loads, registers the
-> `duckdb` PDO driver, connects to in-memory and file databases, reports
-> attributes, quotes strings, and runs transactions. **Statement execution
-> (`query`/`exec`/`prepare`) is not implemented yet — that is phase 1.**
+> **Phase 1 (current):** in addition to connecting, the driver now executes
+> statements — `PDO::exec()` (affected-row count), `PDO::query()`, and
+> `PDO::prepare()` + `execute()` (re-executable) — and fetches result rows by
+> adapting DuckDB's columnar data chunks to PDO's row-at-a-time model.
+>
+> **Type coverage:** BOOLEAN, all integer widths (HUGEINT / UHUGEINT / large
+> UBIGINT as exact strings), FLOAT, DOUBLE, DECIMAL (exact string), VARCHAR,
+> BLOB, and SQL NULL. **Not yet:** parameter binding (phase 2) and temporal /
+> UUID / nested types, which currently fetch as `NULL` (phase 4).
 
 ## Requirements
 
@@ -54,7 +59,7 @@ extension dir; add `extension=pdo_duckdb` to your `php.ini`). Ensure
 `libduckdb.so` is on the loader path (e.g. copy it into `/usr/local/lib` and run
 `sudo ldconfig`, or set `LD_LIBRARY_PATH`).
 
-## Usage (phase 0)
+## Usage
 
 ```php
 // In-memory database
@@ -68,6 +73,22 @@ $db = new PDO('duckdb:dbname=/path/to/db.duckdb;access_mode=READ_ONLY;threads=4'
 
 $db->getAttribute(PDO::ATTR_DRIVER_NAME);     // "duckdb"
 $db->getAttribute(PDO::ATTR_CLIENT_VERSION);  // e.g. "v1.5.4"
+
+// DDL / DML — exec() returns the affected-row count
+$db->exec('CREATE TABLE t (id INTEGER, name VARCHAR)');
+$db->exec("INSERT INTO t VALUES (1, 'a'), (2, 'b')");   // 2
+
+// Queries
+foreach ($db->query('SELECT id, name FROM t ORDER BY id') as $row) {
+    echo $row['id'], ' => ', $row['name'], "\n";
+}
+
+$count = $db->query('SELECT count(*) FROM t')->fetchColumn();
+
+// Prepared statements (parameter binding arrives in phase 2)
+$stmt = $db->prepare('SELECT * FROM t');
+$stmt->execute();
+$rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $db->beginTransaction();
 $db->commit();
@@ -99,7 +120,7 @@ LD_LIBRARY_PATH="$PWD/third_party/duckdb" \
 |------|---------|
 | `pdo_duckdb.c` | Module entry; registers the driver with the PDO core. |
 | `duckdb_driver.c` | Database-handle methods (connect, attrs, quoter, transactions, errors). |
-| `duckdb_statement.c` | Statement methods (phase 0 stubs). |
+| `duckdb_statement.c` | Statement methods: execute + columnar→row fetch + type decoding. |
 | `php_pdo_duckdb_int.h` | Internal shared structs and the error helper. |
 | `config.m4` / `config.w32` | Build configuration. |
 | `scripts/fetch-duckdb.sh` | Downloads the pinned DuckDB C library. |

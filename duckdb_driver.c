@@ -93,22 +93,49 @@ static void pdo_duckdb_handle_closer(pdo_dbh_t *dbh)
 }
 /* }}} */
 
-/* {{{ preparer — implemented in phase 1 */
+/* {{{ preparer — build a DuckDB prepared statement for the statement handle.
+ * Parameter binding lands in phase 2; for now unbound parameters simply cause
+ * DuckDB to fail loudly at execute time. */
 static bool pdo_duckdb_handle_preparer(pdo_dbh_t *dbh, zend_string *sql,
 		pdo_stmt_t *stmt, zval *driver_options)
 {
-	pdo_duckdb_error(dbh, "IM001",
-		"prepared statements are not implemented yet (planned for phase 1)");
-	return false;
+	pdo_duckdb_db_handle *H = (pdo_duckdb_db_handle *)dbh->driver_data;
+	pdo_duckdb_stmt *S = ecalloc(1, sizeof(pdo_duckdb_stmt));
+
+	S->H = H;
+
+	if (duckdb_prepare(H->conn, ZSTR_VAL(sql), &S->prepared) == DuckDBError) {
+		pdo_duckdb_error(dbh, "HY000", duckdb_prepare_error(S->prepared));
+		duckdb_destroy_prepare(&S->prepared);
+		efree(S);
+		return false;
+	}
+
+	stmt->driver_data = S;
+	stmt->methods = &duckdb_stmt_methods;
+	/* DuckDB understands positional "?" placeholders natively. */
+	stmt->supports_placeholders = PDO_PLACEHOLDER_POSITIONAL;
+
+	return true;
 }
 /* }}} */
 
-/* {{{ doer — implemented in phase 1 */
+/* {{{ doer — PDO::exec(): run a resultless statement, return affected rows */
 static zend_long pdo_duckdb_handle_doer(pdo_dbh_t *dbh, const zend_string *sql)
 {
-	pdo_duckdb_error(dbh, "IM001",
-		"PDO::exec() is not implemented yet (planned for phase 1)");
-	return -1;
+	pdo_duckdb_db_handle *H = (pdo_duckdb_db_handle *)dbh->driver_data;
+	duckdb_result result;
+	zend_long changed;
+
+	if (duckdb_query(H->conn, ZSTR_VAL(sql), &result) == DuckDBError) {
+		pdo_duckdb_error(dbh, "HY000", duckdb_result_error(&result));
+		duckdb_destroy_result(&result);
+		return -1;
+	}
+
+	changed = (zend_long) duckdb_rows_changed(&result);
+	duckdb_destroy_result(&result);
+	return changed;
 }
 /* }}} */
 
